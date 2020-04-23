@@ -115,7 +115,7 @@ class TestLambdaHooks(unittest.TestCase):
         # to call put_object
         self.stubber.add_response("head_bucket", {})
         self.stubber.add_response("head_object", {
-            "ETag": '"b9b90449fe17ded2c9424367f0fd147e"' # correct hash for the files, you can trust this, including extra quotes
+            "ETag": '"d41d8cd98f00b204e9800998ecf8427e"' # correct hash for the files, you can trust this, including extra quotes
         })
         # should not call put_object again, so no stubbing
 
