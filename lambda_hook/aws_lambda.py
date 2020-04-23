@@ -34,10 +34,13 @@ def _zip_files(files, root):
         str: content of the ZIP file as a byte string.
 
     """
+
     zip_data = BytesIO()
+    hash = hashlib.md5()
     with ZipFile(zip_data, 'w', ZIP_DEFLATED) as zip_file:
         for fname in files:
             zip_file.write(os.path.join(root, fname), fname)
+            hash.update(open(os.path.join(root, fname), "rb").read())
 
         # Fix file permissions to avoid any issues - only care whether a file
         # is executable or not, choosing between modes 755 and 644 accordingly.
@@ -58,7 +61,7 @@ def _zip_files(files, root):
     contents = zip_data.getvalue()
     zip_data.close()
 
-    return contents
+    return hash.hexdigest(), contents
 
 
 def _find_files(root, includes, excludes):
@@ -86,7 +89,7 @@ def _find_files(root, includes, excludes):
     root = os.path.abspath(root)
     file_set = formic.FileSet(directory=root, include=includes,
                               exclude=excludes)
-    for filename in file_set.qualified_files(absolute=False):
+    for filename in file_set.qualified_files(absolute=True):
         yield filename
 
 
@@ -206,23 +209,55 @@ def _upload_code(s3_conn, bucket_name, name, contents):
             through.
     """
 
-    hsh = hashlib.md5(contents)
-    logger.debug('lambda: ZIP hash: %s', hsh.hexdigest())
+    content = contents[1]
+    hash = contents[0]
 
-    key = 'lambda-{}-{}.zip'.format(name, hsh.hexdigest())
+    print('lambda: ZIP hash: %s', hash)
+
+    logger.debug('lambda: ZIP hash: %s', hash)
+
+    key = 'lambda-{}-{}.zip'.format(name, hash)
 
     info = _head_object(s3_conn, bucket_name, key)
-    expected_etag = '"{}"'.format(hsh.hexdigest())
+    expected_etag = '"{}"'.format(hash)
 
     if info and info['ETag'] == expected_etag:
         logger.info('lambda: object %s already exists, not uploading', key)
     else:
         logger.info('lambda: uploading object %s', key)
-        s3_conn.put_object(Bucket=bucket_name, Key=key, Body=contents,
+        s3_conn.put_object(Bucket=bucket_name, Key=key, Body=content,
                            ContentType='application/zip',
                            ACL='authenticated-read')
 
     return {"bucket": bucket_name, "key": key}
+
+
+# def checksum(contents, hash_factory=hashlib.md5, chunk_num_blocks=128):
+#     h = hash_factory()
+#     for chunk in iter(lambda: f.read(chunk_num_blocks*h.block_size), b''):
+#         h.update(chunk)
+#     return h.hexdigest()
+
+# def checksum(filename):
+#     input_handle = open(filename, 'rb')
+#     myzip = gzip.GzipFile(
+#         filename='',  # remove filename for consitant hash across machines
+#         mode='wb',
+#         fileobj=open("final_contents.gz", 'wb'),
+#         mtime=0,
+#     )
+#     block_size = 4096
+#     try:
+#         for chunk in iter(lambda: input_handle.read(block_size), b''):
+#             myzip.write(chunk)
+#     finally:
+#         input_handle.close()
+#         myzip.close()
+#     md5 = hashlib.md5()
+#     with open("final_contents.zip", 'rb') as f:
+#         for chunk in iter(lambda: f.read(block_size), b''):
+#             md5.update(chunk)
+#     return md5.hexdigest()
 
 
 def _check_pattern_list(patterns, key, default=None):
@@ -285,9 +320,9 @@ def _upload_function(s3_conn, bucket_name, function_name, path,
 
     logger.debug('lambda: processing function %s', function_name)
 
-    zip_contents = _zip_from_file_patterns(root, includes, excludes)
+    result = _zip_from_file_patterns(root, includes, excludes)
 
-    return _upload_code(s3_conn, bucket_name, function_name, zip_contents)
+    return _upload_code(s3_conn, bucket_name, function_name, result)
 
 
 def upload_lambda_functions(s3_conn, bucket_name, function_name, path,
